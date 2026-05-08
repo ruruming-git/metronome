@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>節拍器</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Crimson+Pro:ital,wght@0,300;0,400;1,300&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+  :root {
+    --wood-dark: #2c1a0e;
+    --wood-mid: #5c3a1e;
+    --wood-light: #8b5e3c;
+    --wood-highlight: #c4935a;
+    --gold: #c9a84c;
+    --gold-light: #e8c97a;
+    --cream: #f5f0e8;
+    --shadow: rgba(0,0,0,0.6);
+    --tick-color: #1a0f08;
+  }
+
+  body {
+    min-height: 100vh;
+    min-height: -webkit-fill-available;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: #000000;
+    font-family: 'Crimson Pro', serif;
+    overflow: hidden;
+    overscroll-behavior: none;
+    -webkit-text-size-adjust: 100%;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  /* Remove ambient glow - wastes OLED pixels */
+  body::before { display: none; }
+
+  .scene {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 24px;
+    width: 100%;
+    max-width: 360px;
+    padding: 16px;
+  }
+
+  .title-label {
+    font-family: 'Playfair Display', serif;
+    font-size: 13px;
+    letter-spacing: 0.4em;
+    color: #2a2218;
+    text-transform: uppercase;
+  }
+
+  /* ─── Metronome body ─── */
+  .metronome {
+    position: relative;
+    width: 200px;
+  }
+
+  @media (max-height: 700px) {
+    .scene { gap: 14px; }
+    .metronome, .body-wrap { width: 160px; height: 224px; }
+    .body-wrap { transform: scale(0.8); transform-origin: top center; margin-bottom: -56px; }
+  }
+
+  /* Pyramid / trapezoid body */
+  .body-wrap {
+    position: relative;
+    width: 200px;
+    height: 280px;
+    filter: drop-shadow(0 20px 40px rgba(0,0,0,0.8));
+  }
+
+  .body-svg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  /* Pendulum pivot sits at bottom of the window opening */
+  .pendulum-container {
+    position: absolute;
+    left: 50%;
+    top: 248px;
+    transform: translateX(-50%);
+    width: 0;
+    height: 0;
+  }
+
+  .pendulum-arm {
+    position: absolute;
+    left: 50%;
+    /* bottom of arm (pivot) sits at y=248px; arm is 190px tall so top = 248-190 = 58px */
+    top: 58px;
+    transform-origin: bottom center;
+    transform: translateX(-50%);
+    width: 4px;
+    height: 190px;
+    background: linear-gradient(0deg, #888 0%, #ccc 60%, #bbb 100%);
+    border-radius: 2px 2px 1px 1px;
+    box-shadow: 0 0 4px rgba(0,0,0,0.5);
+  }
+
+  /* Weight (sliding bob on arm) — measured from bottom of arm */
+  .pendulum-weight {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: 80px; /* default BPM=80 position — distance from pivot */
+    width: 28px;
+    height: 18px;
+    background: linear-gradient(135deg, #e8c97a 0%, #c9a84c 50%, #a07830 100%);
+    border-radius: 3px;
+    border: 1px solid #8a6020;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.2);
+    cursor: grab;
+    touch-action: none;
+    -webkit-touch-callout: none;
+    z-index: 10;
+    transition: bottom 0.3s ease;
+  }
+
+  .pendulum-weight::after {
+    content: '';
+    position: absolute;
+    left: 3px; right: 3px;
+    top: 6px;
+    height: 2px;
+    background: rgba(0,0,0,0.3);
+    border-radius: 1px;
+  }
+
+  /* Needle tip — at top of arm */
+  .pendulum-tip {
+    position: absolute;
+    left: 50%;
+    top: -10px;
+    transform: translateX(-50%);
+    width: 0;
+    height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-bottom: 10px solid #ccc;
+    filter: drop-shadow(0 -2px 3px rgba(0,0,0,0.4));
+  }
+
+  /* Pivot pin — at bottom of arm */
+  .pendulum-pivot {
+    position: absolute;
+    left: 50%;
+    bottom: -6px;
+    transform: translateX(-50%);
+    width: 14px;
+    height: 14px;
+    background: radial-gradient(circle at 35% 35%, #eee, #888);
+    border-radius: 50%;
+    border: 1px solid #555;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.5);
+    z-index: 5;
+  }
+
+  /* ─── Swing animation ─── */
+  @keyframes swing {
+    0%   { transform: translateX(-50%) rotate(-22deg); }
+    50%  { transform: translateX(-50%) rotate(22deg); }
+    100% { transform: translateX(-50%) rotate(-22deg); }
+  }
+
+  .pendulum-arm.swinging {
+    animation: swing var(--period, 0.75s) ease-in-out infinite;
+  }
+
+  .tick-dot {
+    position: absolute;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--gold);
+    top: 0px;
+    opacity: 0;
+    transition: opacity 0.05s;
+    box-shadow: 0 0 8px var(--gold-light);
+  }
+  .tick-dot.left  { left: -40px; }
+  .tick-dot.right { right: -40px; }
+  .tick-dot.flash { opacity: 1; }
+
+  /* ─── Controls panel ─── */
+  .controls {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    width: 260px;
+  }
+
+  .bpm-display {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .bpm-number {
+    font-family: 'Playfair Display', serif;
+    font-size: 52px;
+    color: var(--cream);
+    line-height: 1;
+    text-shadow: 0 0 20px rgba(201,168,76,0.4);
+  }
+
+  .bpm-unit {
+    font-size: 11px;
+    letter-spacing: 0.3em;
+    color: #1a1408;
+    text-transform: uppercase;
+  }
+
+  .tempo-name {
+    font-style: italic;
+    font-size: 15px;
+    color: #3a2c10;
+    min-height: 20px;
+  }
+
+  /* Slider */
+  .bpm-slider-wrap {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .bpm-slider-wrap span {
+    font-size: 11px;
+    color: #1a1408;
+    width: 28px;
+    text-align: center;
+  }
+
+  input[type=range] {
+    flex: 1;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 4px;
+    background: linear-gradient(90deg, var(--gold) var(--pct, 40%), #0d0d0d 0%);
+    border-radius: 2px;
+    outline: none;
+    touch-action: manipulation;
+  }
+
+  input[type=range]::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 2px;
+  }
+
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 35%, var(--gold-light), var(--gold));
+    border: 2px solid var(--wood-dark);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+    cursor: pointer;
+    margin-top: -10px;
+  }
+
+  /* Buttons */
+  .btn-row {
+    display: flex;
+    gap: 12px;
+  }
+
+  .btn {
+    font-family: 'Crimson Pro', serif;
+    font-size: 16px;
+    letter-spacing: 0.15em;
+    padding: 14px 28px;
+    border: 1px solid var(--gold);
+    background: transparent;
+    color: var(--gold);
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background 0.15s, color 0.15s;
+    -webkit-touch-callout: none;
+    touch-action: manipulation;
+    min-width: 88px;
+  }
+
+  .btn:hover {
+    background: var(--gold);
+    color: var(--wood-dark);
+  }
+
+  .btn.active {
+    background: var(--gold);
+    color: var(--wood-dark);
+    font-weight: 700;
+  }
+
+  /* Beat indicator */
+  .beat-lights {
+    display: flex;
+    gap: 8px;
+  }
+
+  .beat-light {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #0d0d0d;
+    border: 1px solid #1a1408;
+    transition: background 0.05s, box-shadow 0.05s;
+  }
+
+  .beat-light.on {
+    background: var(--gold-light);
+    box-shadow: 0 0 8px var(--gold);
+  }
+
+  .beat-light.accent {
+    width: 10px; height: 10px;
+  }
+
+  /* Time signature */
+  .time-sig-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .time-sig-row label {
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    color: #1a1408;
+    text-transform: uppercase;
+  }
+
+  .time-sig-btn {
+    font-family: 'Playfair Display', serif;
+    font-size: 13px;
+    padding: 8px 12px;
+    border: 1px solid #1a1408;
+    background: transparent;
+    color: #2a2010;
+    cursor: pointer;
+    border-radius: 2px;
+    transition: all 0.2s;
+    touch-action: manipulation;
+    min-width: 44px;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .time-sig-btn.selected {
+    border-color: var(--gold);
+    color: var(--gold);
+    background: rgba(201,168,76,0.08);
+  }
+</style>
+</head>
+<body>
+
+<div class="scene">
+  <div class="title-label">Metronome &nbsp;節拍器</div>
+
+  <div class="metronome">
+    <div class="body-wrap">
+
+      <!-- SVG wooden body -->
+      <svg class="body-svg" viewBox="0 0 200 280" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <!-- Wood grain gradient -->
+          <linearGradient id="woodGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%"   stop-color="#3a1f0a"/>
+            <stop offset="15%"  stop-color="#6b4020"/>
+            <stop offset="40%"  stop-color="#8b5e3c"/>
+            <stop offset="60%"  stop-color="#7a4e2c"/>
+            <stop offset="80%"  stop-color="#5c3a1e"/>
+            <stop offset="100%" stop-color="#3a1f0a"/>
+          </linearGradient>
+          <linearGradient id="woodTop" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%"   stop-color="#2c1a0e"/>
+            <stop offset="30%"  stop-color="#7a5030"/>
+            <stop offset="50%"  stop-color="#a07848"/>
+            <stop offset="70%"  stop-color="#7a5030"/>
+            <stop offset="100%" stop-color="#2c1a0e"/>
+          </linearGradient>
+          <linearGradient id="faceGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%"   stop-color="#c4935a" stop-opacity="0.15"/>
+            <stop offset="100%" stop-color="#2c1a0e" stop-opacity="0.3"/>
+          </linearGradient>
+          <linearGradient id="goldGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%"  stop-color="#e8c97a"/>
+            <stop offset="50%" stop-color="#c9a84c"/>
+            <stop offset="100%" stop-color="#a07830"/>
+          </linearGradient>
+          <!-- Scale markings clip -->
+          <clipPath id="bodyClip">
+            <polygon points="60,10 140,10 180,265 20,265"/>
+          </clipPath>
+        </defs>
+
+        <!-- Shadow underneath -->
+        <ellipse cx="100" cy="275" rx="80" ry="8" fill="rgba(0,0,0,0.4)"/>
+
+        <!-- Main body trapezoid -->
+        <polygon points="60,10 140,10 180,265 20,265" fill="url(#woodGrad)"/>
+        <!-- Face overlay -->
+        <polygon points="60,10 140,10 180,265 20,265" fill="url(#faceGrad)"/>
+
+        <!-- Left edge highlight -->
+        <line x1="60" y1="10" x2="20" y2="265" stroke="rgba(200,150,80,0.25)" stroke-width="1.5"/>
+        <!-- Right edge highlight -->
+        <line x1="140" y1="10" x2="180" y2="265" stroke="rgba(0,0,0,0.4)" stroke-width="1.5"/>
+
+        <!-- Top cap -->
+        <rect x="55" y="6" width="90" height="10" rx="3" fill="url(#woodTop)"/>
+        <rect x="55" y="6" width="90" height="3" rx="1.5" fill="rgba(255,255,255,0.1)"/>
+
+        <!-- Bottom base -->
+        <rect x="15" y="262" width="170" height="14" rx="3" fill="url(#woodTop)"/>
+        <rect x="15" y="262" width="170" height="4" rx="2" fill="rgba(255,255,255,0.08)"/>
+
+        <!-- Gold trim lines -->
+        <polygon points="62,14 138,14 140,20 60,20" fill="url(#goldGrad)" opacity="0.8"/>
+        <polygon points="22,258 178,258 176,264 24,264" fill="url(#goldGrad)" opacity="0.6"/>
+
+        <!-- Scale markings on face -->
+        <g clip-path="url(#bodyClip)" opacity="0.55">
+          <!-- BPM scale lines -->
+          <g stroke="#c9a84c" stroke-width="0.8">
+            <!-- Lines for BPM scale: top=40, bottom=208 mapped to y=30..240 -->
+            <line x1="72" y1="42"  x2="86" y2="42"/>  <!-- 208 -->
+            <line x1="70" y1="58"  x2="82" y2="58"/>  <!-- 184 -->
+            <line x1="68" y1="78"  x2="84" y2="78"/>  <!-- 160 -->
+            <line x1="66" y1="100" x2="86" y2="100"/> <!-- 138 -->
+            <line x1="64" y1="122" x2="84" y2="122"/> <!-- 116 -->
+            <line x1="62" y1="148" x2="84" y2="148"/> <!-- 96 -->
+            <line x1="60" y1="174" x2="82" y2="174"/> <!-- 76 -->
+            <line x1="58" y1="202" x2="80" y2="202"/> <!-- 56 -->
+            <line x1="56" y1="230" x2="78" y2="230"/> <!-- 40 -->
+          </g>
+          <!-- Minor ticks -->
+          <g stroke="#c9a84c" stroke-width="0.5" opacity="0.5">
+            <line x1="74" y1="50"  x2="80" y2="50"/>
+            <line x1="72" y1="68"  x2="78" y2="68"/>
+            <line x1="70" y1="89"  x2="76" y2="89"/>
+            <line x1="68" y1="111" x2="74" y2="111"/>
+            <line x1="66" y1="135" x2="72" y2="135"/>
+            <line x1="64" y1="161" x2="70" y2="161"/>
+            <line x1="62" y1="188" x2="68" y2="188"/>
+            <line x1="60" y1="216" x2="66" y2="216"/>
+          </g>
+          <!-- BPM labels -->
+          <g fill="#c9a84c" font-size="6" font-family="Georgia, serif" text-anchor="middle">
+            <text x="98" y="44">208</text>
+            <text x="97" y="60">184</text>
+            <text x="96" y="80">160</text>
+            <text x="95" y="102">138</text>
+            <text x="93" y="124">116</text>
+            <text x="91" y="150">96</text>
+            <text x="89" y="176">76</text>
+            <text x="87" y="204">56</text>
+            <text x="85" y="232">40</text>
+          </g>
+        </g>
+
+        <!-- Window opening for pendulum -->
+        <rect x="65" y="24" width="70" height="230" rx="4" fill="rgba(10,5,2,0.85)" stroke="rgba(201,168,76,0.4)" stroke-width="1"/>
+
+        <!-- Gold frame around window -->
+        <rect x="63" y="22" width="74" height="234" rx="5" fill="none" stroke="url(#goldGrad)" stroke-width="1.5"/>
+
+        <!-- Pivot decoration at bottom of window -->
+        <circle cx="100" cy="243" r="6" fill="url(#goldGrad)" opacity="0.9"/>
+        <circle cx="100" cy="243" r="3" fill="#2c1a0e"/>
+
+        <!-- Center line guide (faint) -->
+        <line x1="100" y1="28" x2="100" y2="237" stroke="rgba(201,168,76,0.12)" stroke-width="1" stroke-dasharray="3,4"/>
+
+        <!-- Top of window arc stops (where needle tip swings) -->
+        <path d="M75,36 Q100,28 125,36" stroke="rgba(201,168,76,0.3)" stroke-width="1" fill="none"/>
+
+        <!-- Tick marks at top arc -->
+        <line x1="75" y1="36" x2="70" y2="32" stroke="rgba(201,168,76,0.5)" stroke-width="1"/>
+        <line x1="125" y1="36" x2="130" y2="32" stroke="rgba(201,168,76,0.5)" stroke-width="1"/>
+
+        <!-- Bell / resonator at bottom -->
+        <ellipse cx="100" cy="248" rx="22" ry="6" fill="url(#goldGrad)" opacity="0.5"/>
+      </svg>
+
+      <!-- Pendulum -->
+      <div class="pendulum-arm" id="pendulumArm">
+        <div class="pendulum-pivot"></div>
+        <div class="pendulum-weight" id="weightBob"></div>
+        <div class="pendulum-tip"></div>
+        <div class="tick-dot left"  id="tickLeft"></div>
+        <div class="tick-dot right" id="tickRight"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls">
+
+    <div class="bpm-display">
+      <div class="bpm-number" id="bpmNum">80</div>
+      <div class="bpm-unit">B P M</div>
+      <div class="tempo-name" id="tempoName">Andante</div>
+    </div>
+
+    <div class="bpm-slider-wrap">
+      <span>40</span>
+      <input type="range" id="bpmSlider" min="40" max="208" value="80" step="1">
+      <span>208</span>
+    </div>
+
+    <div class="time-sig-row">
+      <label>拍號</label>
+      <button class="time-sig-btn selected" data-beats="4">4/4</button>
+      <button class="time-sig-btn" data-beats="3">3/4</button>
+      <button class="time-sig-btn" data-beats="2">2/4</button>
+      <button class="time-sig-btn" data-beats="6">6/8</button>
+    </div>
+
+    <div class="beat-lights" id="beatLights"></div>
+
+    <div class="btn-row">
+      <button class="btn" id="tapBtn">Tap</button>
+      <button class="btn" id="startBtn">▶ 開始</button>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  // ── State ──
+  let bpm = 80;
+  let beatsPerBar = 4;
+  let running = false;
+  let beatIndex = 0;
+  let tickTimer = null;
+  let tapTimes = [];
+
+  const pendulumArm = document.getElementById('pendulumArm');
+  const weightBob   = document.getElementById('weightBob');
+  const bpmNum      = document.getElementById('bpmNum');
+  const tempoName   = document.getElementById('tempoName');
+  const bpmSlider   = document.getElementById('bpmSlider');
+  const startBtn    = document.getElementById('startBtn');
+  const tapBtn      = document.getElementById('tapBtn');
+  const tickLeft    = document.getElementById('tickLeft');
+  const tickRight   = document.getElementById('tickRight');
+
+  // ── Tempo names ──
+  const tempos = [
+    { max:  45, name: 'Grave' },
+    { max:  52, name: 'Largo' },
+    { max:  60, name: 'Larghetto' },
+    { max:  66, name: 'Adagio' },
+    { max:  76, name: 'Adagietto' },
+    { max:  80, name: 'Andante' },
+    { max:  96, name: 'Andantino' },
+    { max: 108, name: 'Moderato' },
+    { max: 120, name: 'Allegretto' },
+    { max: 144, name: 'Allegro' },
+    { max: 168, name: 'Vivace' },
+    { max: 192, name: 'Presto' },
+    { max: 999, name: 'Prestissimo' },
+  ];
+
+  function getTempoName(b) {
+    return tempos.find(t => b <= t.max)?.name || 'Prestissimo';
+  }
+
+  // ── Beat lights ──
+  function buildBeatLights() {
+    const container = document.getElementById('beatLights');
+    container.innerHTML = '';
+    for (let i = 0; i < beatsPerBar; i++) {
+      const d = document.createElement('div');
+      d.className = 'beat-light' + (i === 0 ? ' accent' : '');
+      container.appendChild(d);
+    }
+  }
+
+  function flashBeat(idx) {
+    const lights = document.querySelectorAll('.beat-light');
+    lights.forEach((l, i) => l.classList.toggle('on', i === idx));
+  }
+
+  // ── Weight position (BPM → vertical position on arm) ──
+  // Higher BPM → weight higher (smaller top value), lower BPM → weight lower (larger top value)
+  function updateWeightPosition(b) {
+    // arm is 190px; bottom=10 (fast/near pivot) to bottom=150 (slow/far from pivot)
+    // Higher BPM → weight closer to pivot → smaller bottom value
+    const t = 10 + (b - 40) / (208 - 40) * 140;
+    weightBob.style.bottom = t + 'px';
+    weightBob.style.top = '';
+  }
+
+  // ── Slider fill ──
+  function updateSliderFill(val) {
+    const pct = (val - 40) / (208 - 40) * 100;
+    bpmSlider.style.setProperty('--pct', pct + '%');
+  }
+
+  // ── Update BPM ──
+  function setBPM(val) {
+    bpm = Math.max(40, Math.min(208, val));
+    bpmNum.textContent = bpm;
+    tempoName.textContent = getTempoName(bpm);
+    bpmSlider.value = bpm;
+    updateSliderFill(bpm);
+    updateWeightPosition(bpm);
+
+    // Period in seconds (60/BPM * 2 for full swing)
+    const period = (60 / bpm) * 2;
+    pendulumArm.style.setProperty('--period', period + 's');
+
+    if (running) restartTick();
+  }
+
+  // ── AudioContext for click sound ──
+  let audioCtx = null;
+  function getAudioCtx() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    // iOS requires resume after user gesture
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    return audioCtx;
+  }
+
+  // Unlock AudioContext on first touch (iOS)
+  function unlockAudio() {
+    getAudioCtx();
+    document.removeEventListener('touchstart', unlockAudio);
+    document.removeEventListener('touchend', unlockAudio);
+  }
+  document.addEventListener('touchstart', unlockAudio, { once: true });
+  document.addEventListener('touchend', unlockAudio, { once: true });
+
+  function playClick(accent) {
+    try {
+      const ctx = getAudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = accent ? 1800 : 1200;
+      gain.gain.setValueAtTime(accent ? 0.5 : 0.3, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.06);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.06);
+    } catch(e) {}
+  }
+
+  // ── Tick (beats) ──
+  // We need to know the pendulum direction each beat
+  // Even beat index → pendulum is at right extreme; odd → left extreme
+  function tick() {
+    const isAccent = (beatIndex % beatsPerBar === 0);
+    playClick(isAccent);
+    flashBeat(beatIndex % beatsPerBar);
+
+    // Flash dot on the side the pendulum is moving toward
+    // beat 0 = just hit right, beat 1 = just hit left …
+    if (beatIndex % 2 === 0) {
+      tickRight.classList.add('flash');
+      setTimeout(() => tickRight.classList.remove('flash'), 80);
+    } else {
+      tickLeft.classList.add('flash');
+      setTimeout(() => tickLeft.classList.remove('flash'), 80);
+    }
+
+    beatIndex++;
+    tickTimer = setTimeout(tick, (60 / bpm) * 1000);
+  }
+
+  function restartTick() {
+    clearTimeout(tickTimer);
+    beatIndex = 0;
+    if (running) tick();
+  }
+
+  // ── Wake Lock (防止螢幕關閉) ──
+  let wakeLock = null;
+
+  async function acquireWakeLock() {
+    if (!('wakeLock' in navigator)) return;
+    try {
+      wakeLock = await navigator.wakeLock.request('screen');
+    } catch (e) { /* silent fail */ }
+  }
+
+  function releaseWakeLock() {
+    if (wakeLock) { wakeLock.release(); wakeLock = null; }
+  }
+
+  // Re-acquire after tab becomes visible again (iOS releases it on tab switch)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && running) acquireWakeLock();
+  });
+
+  // ── Start / Stop ──
+  function start() {
+    running = true;
+    beatIndex = 0;
+    pendulumArm.classList.add('swinging');
+    startBtn.textContent = '⏹ 停止';
+    startBtn.classList.add('active');
+    acquireWakeLock();
+    tick();
+  }
+
+  function stop() {
+    running = false;
+    clearTimeout(tickTimer);
+    pendulumArm.classList.remove('swinging');
+    startBtn.textContent = '▶ 開始';
+    startBtn.classList.remove('active');
+    document.querySelectorAll('.beat-light').forEach(l => l.classList.remove('on'));
+    releaseWakeLock();
+  }
+
+  startBtn.addEventListener('click', () => running ? stop() : start());
+
+  // ── Slider ──
+  bpmSlider.addEventListener('input', () => setBPM(parseInt(bpmSlider.value)));
+
+  // ── Time signature ──
+  document.querySelectorAll('.time-sig-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.time-sig-btn').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      beatsPerBar = parseInt(btn.dataset.beats);
+      beatIndex = 0;
+      buildBeatLights();
+    });
+  });
+
+  // ── Tap tempo ──
+  tapBtn.addEventListener('click', () => {
+    const now = Date.now();
+    tapTimes.push(now);
+    if (tapTimes.length > 6) tapTimes.shift();
+    if (tapTimes.length >= 2) {
+      const diffs = [];
+      for (let i = 1; i < tapTimes.length; i++) diffs.push(tapTimes[i] - tapTimes[i-1]);
+      const avg = diffs.reduce((a,b)=>a+b,0) / diffs.length;
+      const newBPM = Math.round(60000 / avg);
+      setBPM(newBPM);
+    }
+    // Reset tap if gap > 2s
+    clearTimeout(tapTimes._resetTimer);
+    tapTimes._resetTimer = setTimeout(() => { tapTimes = []; }, 2000);
+  });
+
+  // ── Keyboard shortcut ──
+  document.addEventListener('keydown', e => {
+    if (e.code === 'Space') { e.preventDefault(); running ? stop() : start(); }
+    if (e.code === 'ArrowUp')   setBPM(bpm + 1);
+    if (e.code === 'ArrowDown') setBPM(bpm - 1);
+    if (e.code === 'KeyT') tapBtn.click();
+  });
+
+  // ── Drag weight to change BPM ──
+  // The arm top = 58px within body-wrap, arm height = 190px
+  // pivot (bottom of arm) is at bodyWrap y = 248px
+  // weight bottom css range: 10px (BPM=208, fast) → 150px (BPM=40, slow)
+  // So: dragging weight UP → closer to top of arm → larger bottom value → lower BPM
+  //     dragging weight DOWN → closer to pivot → smaller bottom value → higher BPM
+
+  let isDragging = false;
+  let dragStartY = 0;
+  let dragStartBPM = 80;
+
+  function getClientY(e) {
+    return e.touches ? e.touches[0].clientY : e.clientY;
+  }
+
+  weightBob.addEventListener('mousedown', onDragStart);
+  weightBob.addEventListener('touchstart', onDragStart, { passive: false });
+
+  function onDragStart(e) {
+    isDragging = true;
+    dragStartY = getClientY(e);
+    dragStartBPM = bpm;
+    pendulumArm.style.transition = 'none';
+    weightBob.style.transition = 'none';
+    document.body.style.cursor = 'ns-resize';
+    e.stopPropagation();
+    e.preventDefault();
+  }
+
+  document.addEventListener('mousemove', onDragMove);
+  document.addEventListener('touchmove', onDragMove, { passive: false });
+
+  function onDragMove(e) {
+    if (!isDragging) return;
+    e.preventDefault();
+    const dy = getClientY(e) - dragStartY;
+    // Moving UP (negative dy) = weight moves away from pivot = slower BPM
+    // Moving DOWN (positive dy) = weight moves toward pivot = faster BPM
+    // Invert: drag UP → lower BPM, drag DOWN → higher BPM
+    const deltaBPM = Math.round(-dy * (168 / 140));
+    setBPM(dragStartBPM + deltaBPM);
+  }
+
+  document.addEventListener('mouseup', onDragEnd);
+  document.addEventListener('touchend', onDragEnd);
+  document.addEventListener('touchcancel', onDragEnd);
+
+  function onDragEnd() {
+    if (!isDragging) return;
+    isDragging = false;
+    weightBob.style.transition = 'bottom 0.3s ease';
+    document.body.style.cursor = '';
+  }
+
+  // ── Init ──
+  buildBeatLights();
+  setBPM(80);
+</script>
+</body>
+</html>
